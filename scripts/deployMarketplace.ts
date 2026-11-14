@@ -43,5 +43,5 @@ export async function run(provider: NetworkProvider, args: string[]) {
         feeAddress: feeAddress.toString({ bounceable: false }),
         fee,
     });
-    ui.write('Saved to deployments.json. Rebuild and publish the stand: cd web && npm run deploy');
+    ui.write('Saved to deployments.json. Rebuild and publish the stand: npm run deploy:web');
 }
