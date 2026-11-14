@@ -34,7 +34,7 @@ export async function run(provider: NetworkProvider, args: string[]) {
     } else {
         // the balance pays for admin actions (each cancel/rescue sends 0.1 TON); top it up any time with a plain transfer
         await marketplace.sendDeploy(provider.sender(), toNano('0.5'));
-        await provider.waitForDeploy(marketplace.address);
+        await provider.waitForDeploy(marketplace.address, 150); // up to 5 min: time to approve in the wallet
     }
 
     saveDeployment(net, {

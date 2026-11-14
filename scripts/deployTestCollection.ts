@@ -31,7 +31,7 @@ export async function run(provider: NetworkProvider, args: string[]) {
 
     if (!(await provider.isContractDeployed(collection.address))) {
         await collection.sendDeploy(provider.sender(), toNano('0.05'));
-        await provider.waitForDeploy(collection.address);
+        await provider.waitForDeploy(collection.address, 150); // up to 5 min: time to approve in the wallet
     } else {
         ui.write('Already deployed.');
     }

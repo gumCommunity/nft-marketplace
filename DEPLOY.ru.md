@@ -54,6 +54,15 @@ Blueprint спросит, каким кошельком платить за де
 3. деплоит контракт маркетплейса с 0.5 TON на балансе (из него оплачиваются админские действия);
 4. записывает адрес, комиссию и публичный ключ в `deployments.json`.
 
+Если публичный toncenter testnet не отвечает (`timeout of 30000ms exceeded`), запускайте через tonapi:
+
+```bash
+npx blueprint run deployMarketplace --custom https://testnet.tonapi.io --custom-version tonapi --custom-type testnet
+```
+
+(для mainnet: `https://tonapi.io` и `--custom-type mainnet`). Флаг `--deeplink` вместо выбора кошелька печатает
+ссылку `ton://transfer/...` для подтверждения в Tonkeeper.
+
 Повторный запуск с тем же ключом даёт тот же адрес: контракт не передеплоится, обновятся только настройки
 (например, процент комиссии).
 

@@ -1,1 +1,8 @@
-{}
+{
+    "testnet": {
+        "marketplace": "EQBNh_GGMWnX5HXIvlulH7_jcbKYr1-195aPHeJ3CTjP7jNf",
+        "adminPublicKey": "0829afdf2b1b872894a5f61e7df90dba73635e14bf0c648095d8d5d000cdfb20",
+        "feeAddress": "UQBDEUK5GLzqMbIpN9AKbhCy8I-T7Ju7NEQNzT5BnsmGU4Dx",
+        "fee": 5000
+    }
+}
