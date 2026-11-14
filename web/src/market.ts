@@ -37,23 +37,31 @@ const ton = (x: string) => {
 
 // ---------- amounts (TON attached to each transaction; unused TON comes back as excess where noted) ----------
 export const AMOUNTS = {
-    /** stays on the sale/auction contract as its balance (storage, later returned with the NFT or to the buyer) */
-    deploy: ton('0.05'),
-    /** NFT transfer to the sale/auction; excess returns to the seller */
+    /**
+     * Stays on the sale/auction as its balance (with nftForward). Storage costs ~0.0017 TON/year for a sale and ~0.0025
+     * for an auction (config 18, 2026), so 0.02 TON lasts for years. Goes back to the seller on cancel, to the buyer
+     * (with the NFT) on a sale.
+     */
+    deploy: ton('0.01'),
+    /** NFT transfer to the sale/auction; excess returns to the seller (kept high: some NFT codes need more gas) */
     nftTransfer: ton('0.1'),
-    /** TON forwarded to the sale/auction with ownership_assigned (activates it) */
-    nftForward: ton('0.03'),
-    /** registration note to the marketplace contract (how the stand finds listings) */
-    register: ton('0.01'),
+    /** TON forwarded to the sale/auction with ownership_assigned (activates it; ~0.0004 TON gas, the rest stays) */
+    nftForward: ton('0.01'),
+    /** registration note to the marketplace contract (how the stand finds listings); its gas is ~0.0001 TON */
+    register: ton('0.002'),
     /** fixed price sale: TON on top of the price; the contract requires >= 0.1, the rest returns with the NFT */
     buyGas: ton('0.1'),
     /** jetton purchase: forward_ton_amount (contract requires >= 0.26) and the total attached to the jetton transfer */
     jettonBuyForward: ton('0.3'),
     jettonBuyTotal: ton('0.4'),
-    /** jetton bid: forward_ton_amount for a normal bid (>= 0.05) / a buyout bid (>= 0.25), and the total */
-    jettonBidForward: ton('0.1'),
+    /**
+     * Jetton bid: forward_ton_amount (contract: >= 0.05 for a normal bid, >= 0.25 for a buyout). It stays on the auction
+     * and pays the refund of the outbid bidder (~0.045 TON); the leftover goes to whoever finishes the auction.
+     * jettonBidExtra pays the bidder's jetton wallet; its unused part comes back.
+     */
+    jettonBidForward: ton('0.06'),
     jettonBuyoutForward: ton('0.3'),
-    jettonBidExtra: ton('0.1'),
+    jettonBidExtra: ton('0.05'),
     /** TON auction buyout needs max_bid + 0.1 */
     tonBuyoutGas: ton('0.1'),
     /** cancel sale / cancel auction (>= 0.1; for a sale the unused part returns) */

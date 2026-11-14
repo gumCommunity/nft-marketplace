@@ -47,17 +47,22 @@ seller ── comment "listing:<address>" (0.01 TON) ──> marketplace        
   each address: code hash, data (our marketplace, fee address, fee), the NFT is really held by the listing, and for jettons
   that the listing uses its own jetton wallet. Fake or foreign listings are ignored.
 
-Measured in the sandbox (`tests/`), real fees may differ slightly:
+Measured in the sandbox (`tests/`, marketplace fee 0%). Network fees actually burned are 0.001–0.006 TON per action;
+the rest of the attached TON comes back or moves between the parties:
 
-| Action | Attached | Net cost |
+| Action | Attached | User pays in the end |
 |---|---|---|
-| List (sale or auction) | 0.16 TON | ≈0.094 TON; ≈0.08 of it stays on the listing as its balance |
-| Cancel a sale | 0.1 TON | the listing balance comes back: net **+0.078** TON to the seller |
-| Buy for TON | price + 0.1 TON | price only: the gas excess and the listing balance go to the buyer with the NFT (net +0.077) |
-| Buy for GUM | price in GUM + 0.4 TON | price only (net +0.066 TON) |
-| Bid in TON | the bid (buyout: max bid + 0.1) | an outbid bid comes back minus ≈0.001 TON |
-| Bid in GUM | bid + 0.2 TON (buyout 0.4) | ≈0.1 TON per bid stays on the auction (pays refunds/payouts); GUM come back if outbid |
-| Finish an auction | 0.1 TON (GUM auction 0.25) | the auction's leftover balance goes to whoever finishes |
+| List (sale or auction) | 0.122 TON | ≈0.026 TON: 0.004 network fees + 0.002 registration + 0.02 deposit kept on the listing |
+| Cancel a sale | 0.1 TON | the deposit comes back: net **+0.018** TON to the seller |
+| Buy for TON | price + 0.1 TON | price only; the excess and the listing deposit come back with the NFT (net +0.017) |
+| Buy for GUM | price in GUM + 0.4 TON | price only (net +0.009 TON) |
+| Bid in TON | the bid (buyout: max bid + 0.1) | ≈0.0003 TON; an outbid bid comes back minus ≈0.001 TON |
+| Bid in GUM | bid + 0.11 TON (buyout 0.35) | ≈0.063 TON stays on the auction (pays the refund to the next outbid bidder); GUM come back if outbid |
+| Finish an auction | 0.1 TON (GUM auction 0.25) | the auction's leftover TON goes to whoever finishes (GUM auction: net +0.07) |
+
+The contracts require some of these minimums (0.1 TON to buy/cancel/finish, 0.26 for a GUM purchase, 0.05 per GUM bid);
+the listing deposit and registration are set in `AMOUNTS` (`web/src/market.ts`). Storage of a listing costs
+~0.0017 TON/year (sale) / ~0.0025 (auction), so the 0.02 TON deposit lasts for years.
 
 ## Repository
 

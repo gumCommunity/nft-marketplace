@@ -505,7 +505,7 @@ function actions(m: MarketConfig, c: CheckedListing, user: Address, isSeller: bo
                 'div',
                 'small muted',
                 jetton
-                    ? `+${fmtUnits(AMOUNTS.jettonBidForward + AMOUNTS.jettonBidExtra)} TON for fees (~0.1 is spent). If outbid, your ${cur} come back.`
+                    ? `+${fmtUnits(AMOUNTS.jettonBidForward + AMOUNTS.jettonBidExtra)} TON for fees (~0.06 stays on the auction). If outbid, your ${cur} come back.`
                     : 'The whole amount is your bid. If outbid, it comes back minus ~0.001 TON gas.',
             ),
         );
