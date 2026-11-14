@@ -399,6 +399,115 @@ describe('auction for GUM', () => {
     });
 });
 
+describe('zero marketplace fee (royalty only)', () => {
+    let env: Env;
+    let market: MarketConfig;
+    beforeEach(async () => {
+        env = await setup();
+        market = { ...env.market, fee: 0 };
+    });
+    const received0 = (txs: Transaction[]) => received(txs, env.feeWallet.address);
+
+    it('TON sale: seller gets price - royalty, nothing goes to the fee address', async () => {
+        const nft = await env.mintTo(env.seller.address);
+        const l = await buildSaleListing(
+            { seller: env.seller.address, nft: nft.address, market, royalty: royaltyOf(env), tonPrice: toNano('10') },
+            env.resolveJettonWallet,
+        );
+        await env.send(env.seller, l.messages);
+        expect(checkListing(l.address, SALE_CODE, (await getData(env, l.address))!, market).ok).toBe(true);
+        const res = await env.send(env.buyer, [buyTonMessage(l.address, toNano('10'))]);
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+        expect(received(res.transactions, env.seller.address)).toBe(toNano('9'));
+        expect(received(res.transactions, env.royaltyWallet.address)).toBe(toNano('1'));
+        expect(received0(res.transactions)).toBe(0n);
+    });
+
+    it('GUM sale: no GUM to the fee address', async () => {
+        const nft = await env.mintTo(env.seller.address);
+        const l = await buildSaleListing(
+            {
+                seller: env.seller.address,
+                nft: nft.address,
+                market,
+                royalty: royaltyOf(env),
+                tonPrice: 0n,
+                jetton: { master: GUM_MASTER, price: GUM(100) },
+            },
+            env.resolveJettonWallet,
+        );
+        await env.send(env.seller, l.messages);
+        await giveJettons(env.blockchain, env.buyer.address, GUM(100));
+        await env.send(env.buyer, [
+            buyJettonMessage({
+                buyer: env.buyer.address,
+                buyerJettonWallet: jettonWalletAddress(env.buyer.address),
+                sale: l.address,
+                price: GUM(100),
+            }),
+        ]);
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+        expect(await gumBalance(env, env.seller.address)).toBe(GUM(90));
+        expect(await gumBalance(env, env.royaltyWallet.address)).toBe(GUM(10));
+        expect(await gumBalance(env, env.feeWallet.address)).toBe(0n);
+    });
+
+    it('TON and GUM auctions: payout without fee', async () => {
+        for (const jetton of [false, true]) {
+            const nft = await env.mintTo(env.seller.address);
+            const l = await buildAuctionListing(
+                {
+                    seller: env.seller.address,
+                    nft: nft.address,
+                    market,
+                    royalty: royaltyOf(env),
+                    minBid: jetton ? GUM(10) : toNano('1'),
+                    maxBid: 0n,
+                    stepPercent: 10,
+                    endTime: env.blockchain.now! + 3600,
+                    createdAt: env.blockchain.now,
+                    jettonMaster: jetton ? GUM_MASTER : undefined,
+                },
+                env.resolveJettonWallet,
+            );
+            await env.send(env.seller, l.messages);
+            const a = await listingOf(env, l.address, market);
+            expect(a.status).toBe('active');
+            if (jetton) {
+                await giveJettons(env.blockchain, env.buyer.address, GUM(100));
+                await env.send(env.buyer, [
+                    bidJettonMessage({
+                        bidder: env.buyer.address,
+                        bidderJettonWallet: jettonWalletAddress(env.buyer.address),
+                        auction: l.address,
+                        amount: GUM(100),
+                        buyout: false,
+                    }),
+                ]);
+            } else {
+                await env.send(env.buyer, [bidTonMessage(l.address, toNano('10'))]);
+            }
+            env.blockchain.now! += 3601;
+            const res = await env.send(env.seller, [finishAuctionMessage(l.address, jetton)]);
+            expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+            if (jetton) {
+                expect(await gumBalance(env, env.seller.address)).toBe(GUM(90));
+                expect(await gumBalance(env, env.royaltyWallet.address)).toBe(GUM(10));
+                expect(await gumBalance(env, env.feeWallet.address)).toBe(0n);
+            } else {
+                expect(received0(res.transactions)).toBe(0n);
+                expect(received(res.transactions, env.royaltyWallet.address)).toBeGreaterThan(toNano('0.99'));
+                expect(received(res.transactions, env.seller.address)).toBeGreaterThan(toNano('8.9'));
+            }
+        }
+    });
+});
+
+async function getData(env: Env, a: Address) {
+    const acc = (await env.blockchain.getContract(a)).accountState;
+    return acc?.type === 'active' ? acc.state.data : null;
+}
+
 describe('marketplace contract and listing checks', () => {
     let env: Env;
     beforeEach(async () => {
