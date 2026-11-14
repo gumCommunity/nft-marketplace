@@ -1,0 +1,6 @@
+{
+    "name": "Test Square",
+    "description": "Test NFT for the marketplace stand. No value.",
+    "image": "https://gumcommunity.github.io/nft-marketplace/test-nft/1.png",
+    "attributes": [{ "trait_type": "Shape", "value": "Square" }]
+}

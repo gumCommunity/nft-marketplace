@@ -1,0 +1,37 @@
+{
+    "name": "nft-marketplace",
+    "version": "0.1.0",
+    "private": true,
+    "license": "MIT",
+    "description": "NFT marketplace on TON: Getgems sale/auction contracts, deploy scripts and a test stand",
+    "scripts": {
+        "start": "blueprint run",
+        "test": "jest --verbose",
+        "dev": "vite --config web/vite.config.mts",
+        "build:web": "tsc -p web --noEmit && vite build --config web/vite.config.mts",
+        "deploy:web": "npm run build:web && node web/deploy.mjs"
+    },
+    "devDependencies": {
+        "@ton-community/func-js": "0.11.0",
+        "@ton/blueprint": "^0.47.1",
+        "@ton/core": "^0.63.1",
+        "@ton/crypto": "^3.3.0",
+        "@ton/sandbox": "^0.45.0",
+        "@ton/test-utils": "^0.12.0",
+        "@ton/ton": "^16.3.0",
+        "@types/jest": "^30.0.0",
+        "@types/node": "^26.6.6",
+        "func-js-bin-0.4.5": "npm:@ton-community/func-js-bin@0.4.5",
+        "jest": "^30.5.2",
+        "prettier": "^3.9.10",
+        "ts-jest": "^29.4.15",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.8"
+    },
+    "dependencies": {
+        "@tonconnect/ui": "^5.0.3",
+        "buffer": "^6.0.3",
+        "tweetnacl": "^1.0.3"
+    }
+}
