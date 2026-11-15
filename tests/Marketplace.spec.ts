@@ -16,6 +16,7 @@ import {
     buyTonMessage,
     cancelAuctionMessage,
     cancelSaleMessage,
+    changePriceMessage,
     checkListing,
     finishAuctionMessage,
     JettonPriceValue,
@@ -163,7 +164,7 @@ describe('fixed price sale for GUM', () => {
                 market: env.market,
                 royalty: royaltyOf(env),
                 tonPrice: 0n,
-                jetton: { master: GUM_MASTER, price: gumPrice },
+                jettons: [{ master: GUM_MASTER, price: gumPrice }],
             },
             env.resolveJettonWallet,
         );
@@ -221,6 +222,169 @@ describe('fixed price sale for GUM', () => {
         const { sale } = await list();
         const res = await env.send(env.buyer, [buyTonMessage(sale, toNano('10'))]);
         expect(res.transactions).toHaveTransaction({ to: sale, success: false, exitCode: 459 });
+    });
+});
+
+describe('sale in TON and GUM at once, price change', () => {
+    let env: Env;
+    beforeEach(async () => {
+        env = await setup();
+    });
+
+    async function list(tonPrice = toNano('10'), gumPrice = GUM(100)) {
+        const nft = await env.mintTo(env.seller.address);
+        const l = await buildSaleListing(
+            {
+                seller: env.seller.address,
+                nft: nft.address,
+                market: env.market,
+                royalty: royaltyOf(env),
+                tonPrice,
+                jettons: [{ master: GUM_MASTER, price: gumPrice }],
+            },
+            env.resolveJettonWallet,
+        );
+        await env.send(env.seller, l.messages);
+        return { nft, sale: l.address };
+    }
+    const buyGum = (sale: Address, price: bigint) =>
+        env.send(env.buyer, [
+            buyJettonMessage({
+                buyer: env.buyer.address,
+                buyerJettonWallet: jettonWalletAddress(env.buyer.address),
+                sale,
+                price,
+            }),
+        ]);
+    const changePrice = async (sale: Address, tonPrice: bigint, gum?: bigint, from = env.seller) =>
+        env.send(from, [
+            await changePriceMessage(
+                { sale, tonPrice, jettons: gum ? [{ master: GUM_MASTER, price: gum }] : [] },
+                env.resolveJettonWallet,
+            ),
+        ]);
+
+    it('lists with both prices', async () => {
+        const { sale } = await list();
+        const l = await saleOf(env, sale);
+        expect(l.status).toBe('active');
+        expect(l.data.tonPrice).toBe(toNano('10'));
+        expect([...l.data.jettonPrices.values()].map((p) => p.price)).toEqual([GUM(100)]);
+    });
+
+    it('bought for TON', async () => {
+        const { nft, sale } = await list();
+        const res = await env.send(env.buyer, [buyTonMessage(sale, toNano('10'))]);
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+        expect(received(res.transactions, env.seller.address)).toBe(toNano('8.5'));
+        expect((await saleOf(env, sale)).status).toBe('sold');
+        // GUM sent afterwards is refunded
+        await giveJettons(env.blockchain, env.buyer.address, GUM(100));
+        await buyGum(sale, GUM(100));
+        expect(await gumBalance(env, env.buyer.address)).toBe(GUM(100));
+    });
+
+    it('bought for GUM', async () => {
+        const { nft, sale } = await list();
+        await giveJettons(env.blockchain, env.buyer.address, GUM(100));
+        await buyGum(sale, GUM(100));
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+        expect(await gumBalance(env, env.seller.address)).toBe(GUM(85));
+        // TON sent afterwards bounces
+        const res = await env.send(env.buyer, [buyTonMessage(sale, toNano('10'))]);
+        expect(res.transactions).toHaveTransaction({ to: sale, success: false });
+    });
+
+    it('seller changes both prices; the old prices no longer work', async () => {
+        const { nft, sale } = await list(toNano('10'), GUM(100));
+        const res = await changePrice(sale, toNano('20'), GUM(300));
+        expect(res.transactions).toHaveTransaction({ to: sale, success: true });
+        const l = await saleOf(env, sale);
+        expect(l.status).toBe('active');
+        expect(l.data.tonPrice).toBe(toNano('20'));
+        expect([...l.data.jettonPrices.values()].map((p) => p.price)).toEqual([GUM(300)]);
+
+        const old = await env.send(env.buyer, [buyTonMessage(sale, toNano('10'))]);
+        expect(old.transactions).toHaveTransaction({ to: sale, success: false, exitCode: 450 });
+        await giveJettons(env.blockchain, env.buyer.address, GUM(300));
+        await buyGum(sale, GUM(100));
+        expect(await gumBalance(env, env.buyer.address)).toBe(GUM(300)); // refunded
+        await buyGum(sale, GUM(300));
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+        expect(await gumBalance(env, env.seller.address)).toBe(GUM(255));
+    });
+
+    it('a TON-only sale can get a GUM price, and a GUM price can be removed', async () => {
+        const nft = await env.mintTo(env.seller.address);
+        const l = await buildSaleListing(
+            {
+                seller: env.seller.address,
+                nft: nft.address,
+                market: env.market,
+                royalty: royaltyOf(env),
+                tonPrice: toNano('10'),
+            },
+            env.resolveJettonWallet,
+        );
+        await env.send(env.seller, l.messages);
+        await changePrice(l.address, 0n, GUM(50)); // GUM only now
+        let s = await saleOf(env, l.address);
+        expect(s.data.tonPrice).toBe(0n);
+        const key = BigInt('0x' + jettonWalletAddress(l.address).hash.toString('hex'));
+        expect(s.data.jettonPrices.get(key)?.price).toBe(GUM(50));
+
+        await changePrice(l.address, toNano('5')); // TON only again
+        s = await saleOf(env, l.address);
+        expect(s.data.tonPrice).toBe(toNano('5'));
+        expect(s.data.jettonPrices.size).toBe(0);
+        await env.send(env.buyer, [buyTonMessage(l.address, toNano('5'))]);
+        expect((await nft.getNftData()).owner?.equals(env.buyer.address)).toBe(true);
+    });
+
+    it('only the seller can change the price, and not after the sale', async () => {
+        const { sale } = await list();
+        const res = await changePrice(sale, toNano('1'), undefined, env.buyer);
+        expect(res.transactions).toHaveTransaction({ to: sale, success: false });
+        expect((await saleOf(env, sale)).data.tonPrice).toBe(toNano('10'));
+
+        await env.send(env.buyer, [buyTonMessage(sale, toNano('10'))]);
+        const after = await changePrice(sale, toNano('1'));
+        expect(after.transactions).toHaveTransaction({ to: sale, success: false, exitCode: 404 });
+    });
+
+    it('price change costs little gas; the rest stays on the sale and returns on cancel', async () => {
+        const { nft, sale } = await list();
+        const before = (await env.blockchain.getContract(sale)).balance;
+        const res = await changePrice(sale, toNano('20'), GUM(300));
+        const tx = res.transactions.find(
+            (t) => t.inMessage?.info.type === 'internal' && t.inMessage.info.dest.equals(sale),
+        )!;
+        const gas = tx.totalFees.coins;
+        expect(gas).toBeLessThan(toNano('0.001'));
+        const after = (await env.blockchain.getContract(sale)).balance;
+        expect(after - before).toBe(AMOUNTS.changePrice - gas);
+        await env.send(env.seller, [cancelSaleMessage(sale)]);
+        expect((await nft.getNftData()).owner?.equals(env.seller.address)).toBe(true);
+    });
+
+    it('rejects bad prices', async () => {
+        const sale = env.seller.address;
+        await expect(
+            changePriceMessage({ sale, tonPrice: 0n, jettons: [] }, env.resolveJettonWallet),
+        ).rejects.toThrow();
+        await expect(
+            changePriceMessage(
+                {
+                    sale,
+                    tonPrice: 1n,
+                    jettons: [
+                        { master: GUM_MASTER, price: 1n },
+                        { master: GUM_MASTER, price: 2n },
+                    ],
+                },
+                env.resolveJettonWallet,
+            ),
+        ).rejects.toThrow('One price per jetton');
     });
 });
 
@@ -432,7 +596,7 @@ describe('zero marketplace fee (royalty only)', () => {
                 market,
                 royalty: royaltyOf(env),
                 tonPrice: 0n,
-                jetton: { master: GUM_MASTER, price: GUM(100) },
+                jettons: [{ master: GUM_MASTER, price: GUM(100) }],
             },
             env.resolveJettonWallet,
         );

@@ -14,12 +14,14 @@ import {
     buyTonMessage,
     cancelAuctionMessage,
     cancelSaleMessage,
+    changePriceMessage,
     finishAuctionMessage,
     mintMessage,
     nextMinBid,
     PERCENT_BASE,
     testItemContent,
     type MarketConfig,
+    type SaleData,
     type Royalty,
     type TcMessage,
 } from './market';
@@ -379,6 +381,10 @@ function actions(m: MarketConfig, c: CheckedListing, user: Address, isSeller: bo
     if (l.kind === 'sale' && l.status === 'active') {
         const d = l.data;
         if (isSeller) {
+            const change = btn('Change price', () => {
+                change.remove();
+                box.prepend(changePriceForm(m, l.address, d));
+            });
             btn(
                 'Cancel sale',
                 () => send([cancelSaleMessage(l.address)], done('Sale canceled, the NFT is back in your wallet.')),
@@ -406,11 +412,15 @@ function actions(m: MarketConfig, c: CheckedListing, user: Address, isSeller: bo
                 }
             });
         }
+        const fees = [
+            ...(d.tonPrice > 0n ? [`+${fmtUnits(AMOUNTS.buyGas)} TON`] : []),
+            ...(d.jettonPrices.size ? [`+${fmtUnits(AMOUNTS.jettonBuyTotal)} TON with ${currencies(m, d)}`] : []),
+        ];
         box.append(
             $(
                 'div',
                 'small muted',
-                `+${fmtUnits(d.tonPrice > 0n ? AMOUNTS.buyGas : AMOUNTS.jettonBuyTotal)} TON for fees, the unused part comes back.`,
+                `${d.tonPrice > 0n && d.jettonPrices.size ? 'Pay with any of them. ' : ''}${fees.join(', ')} for fees, the unused part comes back.`,
             ),
         );
     }
@@ -592,13 +602,20 @@ function sellForm(m: MarketConfig, user: Address, n: Nft): HTMLElement {
         ['TON', 'TON'],
         ...m.jettons.map((j) => [j.master.toRawString(), j.symbol] as [string, string]),
     ]);
-    const price = textInput('', 'e.g. 1.5');
+    // fixed price: one optional price per currency, the buyer pays with any of them
+    const salePrices: { jetton: (typeof m.jettons)[number] | null; input: HTMLInputElement }[] = [
+        { jetton: null, input: textInput('', 'e.g. 1.5') },
+        ...m.jettons.map((j) => ({ jetton: j, input: textInput('', 'empty = not accepted') })),
+    ];
     const minBid = textInput('', 'e.g. 1');
     const maxBid = textInput('', 'optional');
     const step = textInput('5');
     const hours = textInput('24');
     const saleFields = $('div', 'fields');
-    saleFields.append(field('Price', price));
+    for (const sp of salePrices) saleFields.append(field(`Price in ${sp.jetton?.symbol ?? 'TON'}`, sp.input));
+    saleFields.append($('div', 'small muted', 'Set one or several prices: the buyer pays with any of them.'));
+    const currencyField = field('Currency', currency);
+    currencyField.classList.add('hidden');
     const aucFields = $('div', 'fields hidden');
     aucFields.append(
         field('Minimal bid', minBid),
@@ -609,6 +626,7 @@ function sellForm(m: MarketConfig, user: Address, n: Nft): HTMLElement {
     kind.onchange = () => {
         saleFields.classList.toggle('hidden', kind.value !== 'sale');
         aucFields.classList.toggle('hidden', kind.value !== 'auction');
+        currencyField.classList.toggle('hidden', kind.value !== 'auction');
     };
     const submit = $('button', 'btn', 'List');
     const note = $(
@@ -616,7 +634,7 @@ function sellForm(m: MarketConfig, user: Address, n: Nft): HTMLElement {
         'small muted',
         `One transaction: deploy the listing contract (${fmtUnits(AMOUNTS.deploy)} TON), send the NFT to it (${fmtUnits(AMOUNTS.nftTransfer)} TON, most comes back), register it (${fmtUnits(AMOUNTS.register)} TON).`,
     );
-    form.append(field('Type', kind), field('Currency', currency), saleFields, aucFields, submit, note);
+    form.append(field('Type', kind), currencyField, saleFields, aucFields, submit, note);
 
     submit.onclick = async () => {
         try {
@@ -629,17 +647,9 @@ function sellForm(m: MarketConfig, user: Address, n: Nft): HTMLElement {
                 address: user,
             };
             if (kind.value === 'sale') {
-                const p = parseUnits(price.value, dec);
-                if (p <= 0n) throw new Error('Price must be positive');
+                const { tonPrice, jettons } = readPrices(salePrices);
                 const l = await buildSaleListing(
-                    {
-                        seller: user,
-                        nft: n.address,
-                        market: m,
-                        royalty,
-                        tonPrice: jetton ? 0n : p,
-                        jetton: jetton ? { master: jetton.master, price: p } : undefined,
-                    },
+                    { seller: user, nft: n.address, market: m, royalty, tonPrice, jettons },
                     jettonWalletOf,
                 );
                 await send(l.messages, {
@@ -678,6 +688,76 @@ function sellForm(m: MarketConfig, user: Address, n: Nft): HTMLElement {
         }
     };
     return form;
+}
+
+type PriceInput = { jetton: { master: Address; decimals: number; symbol: string } | null; input: HTMLInputElement };
+
+/** Reads the per-currency price inputs: empty = that currency is not accepted. */
+function readPrices(inputs: PriceInput[]) {
+    let tonPrice = 0n;
+    const jettons: { master: Address; price: bigint }[] = [];
+    for (const { jetton, input } of inputs) {
+        if (!input.value.trim()) continue;
+        const p = parseUnits(input.value, jetton?.decimals ?? 9);
+        if (p <= 0n) throw new Error(`Price in ${jetton?.symbol ?? 'TON'} must be positive (or empty)`);
+        if (jetton) jettons.push({ master: jetton.master, price: p });
+        else tonPrice = p;
+    }
+    if (tonPrice === 0n && !jettons.length) throw new Error('Set at least one price');
+    return { tonPrice, jettons };
+}
+
+const currencies = (m: MarketConfig, d: SaleData) =>
+    [...d.jettonPrices.values()].map((p) => currencyOf(m, p.master)).join(' / ');
+
+/** Seller's form to change the prices of an active sale (op change_price): no re-listing needed. */
+function changePriceForm(m: MarketConfig, sale: Address, d: SaleData): HTMLElement {
+    const form = $('div', 'form');
+    const current = (master: Address) => [...d.jettonPrices.values()].find((p) => p.master.equals(master))?.price;
+    const inputs: PriceInput[] = [
+        { jetton: null, input: textInput(d.tonPrice > 0n ? plain(d.tonPrice, 9) : '', 'empty = not accepted') },
+        ...m.jettons.map((j) => {
+            const c = current(j.master);
+            return { jetton: j, input: textInput(c ? plain(c, j.decimals) : '', 'empty = not accepted') };
+        }),
+    ];
+    for (const i of inputs) form.append(field(`New price in ${i.jetton?.symbol ?? 'TON'}`, i.input));
+    const save = $('button', 'btn', 'Save prices');
+    form.append(
+        save,
+        $('div', 'small muted', `${fmtUnits(AMOUNTS.changePrice)} TON: gas, the rest stays with the listing.`),
+    );
+    save.onclick = async () => {
+        try {
+            const { tonPrice, jettons } = readPrices(inputs);
+            const msg = await changePriceMessage({ sale, tonPrice, jettons }, jettonWalletOf);
+            const same = (x: SaleData) =>
+                x.tonPrice === tonPrice &&
+                x.jettonPrices.size === jettons.length &&
+                jettons.every((j) =>
+                    [...x.jettonPrices.values()].some((p) => p.master.equals(j.master) && p.price === j.price),
+                );
+            await send([msg], {
+                watch: sale,
+                // the sale's last transaction changes even if the change failed: wait for the new prices on-chain
+                until: async () => {
+                    const c = await loadListing(sale);
+                    return c?.listing.kind === 'sale' && same(c.listing.data);
+                },
+                done: 'Price changed.',
+            });
+        } catch (e) {
+            showNotice(`Error: ${(e as Error).message}`, 'err');
+        }
+    };
+    return form;
+}
+
+/** Exact amount for an input field (no separators, no rounding). */
+function plain(x: bigint, decimals: number): string {
+    const base = 10n ** BigInt(decimals);
+    const frac = (x % base).toString().padStart(decimals, '0').replace(/0+$/, '');
+    return frac ? `${x / base}.${frac}` : `${x / base}`;
 }
 
 async function isLive(address: Address) {

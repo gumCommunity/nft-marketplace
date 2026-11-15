@@ -32,8 +32,8 @@ The seller's wallet signs **one transaction with three messages** (built in [`we
 
 ```
 seller ── deploy (state_init + deploy_blank / deploy_jetton / deploy_auction / set_jetton_wallet) ──> listing
-seller ── NFT transfer(new_owner = listing, forward 0.03 TON) ──> NFT ── ownership_assigned ──> listing   (activates it)
-seller ── comment "listing:<address>" (0.01 TON) ──> marketplace                                          (the stand reads these)
+seller ── NFT transfer(new_owner = listing, forward 0.01 TON) ──> NFT ── ownership_assigned ──> listing   (activates it)
+seller ── comment "listing:<address>" (0.002 TON) ──> marketplace                                         (the stand reads these)
 ```
 
 - **Jetton price / jetton auction.** The listing's own jetton wallet depends on the listing address, so it cannot be in
@@ -41,6 +41,11 @@ seller ── comment "listing:<address>" (0.01 TON) ──> marketplace        
   as `marketplace_address`); the deploy message, signed by that key, sets the jetton wallet and hands the
   marketplace role to our marketplace contract. This is exactly how Getgems' own TypeScript builds deploy messages; the
   key cannot do anything else and is discarded.
+- **Several currencies.** A fixed price sale can have a TON price and a price in every accepted jetton at once (e.g.
+  12 TON or 1000 GUM); the first buyer to pay any of them gets the NFT, the other prices stop working. There is no
+  exchange rate: the seller sets each price. Auctions use one currency (bids must be comparable).
+- **Price change.** The seller changes the prices of an active sale in place (`change_price`, op `0xfd135f7b`): new TON
+  price and the whole jetton price list (a currency can be added or removed). No re-listing, no new deposit.
 - **Getgems' backend flow** (op 1 on the marketplace: the server checks and signs every listing) is supported by the
   contract and covered by tests (`signedDeployBody`), but the stand does not need it: listings are validated when read.
 - **Finding listings.** The stand reads the latest registration comments sent to the marketplace (tonapi), then checks
@@ -53,6 +58,7 @@ the rest of the attached TON comes back or moves between the parties:
 | Action | Attached | User pays in the end |
 |---|---|---|
 | List (sale or auction) | 0.122 TON | ≈0.026 TON: 0.004 network fees + 0.002 registration + 0.02 deposit kept on the listing |
+| Change a sale's prices | 0.005 TON | ≈0.003 TON network fees; the rest stays on the listing (back to the seller on cancel) |
 | Cancel a sale | 0.1 TON | the deposit comes back: net **+0.018** TON to the seller |
 | Buy for TON | price + 0.1 TON | price only; the excess and the listing deposit come back with the NFT (net +0.017) |
 | Buy for GUM | price in GUM + 0.4 TON | price only (net +0.009 TON) |
@@ -82,7 +88,7 @@ deployments.json     addresses and fee per network (written by the scripts, read
 
 ```bash
 npm ci
-npm test            # 25 tests: pinned code == sources, sale TON/GUM, auction TON/GUM, cancel, buyout, admin, checks
+npm test            # 38 tests: pinned code == sources, sale TON/GUM/both, price change, auction TON/GUM, cancel, buyout, admin, checks
 npm run dev         # stand at http://localhost:5173 (?net=mainnet for mainnet)
 npm run build:web   # static files in web/dist
 ```
@@ -117,4 +123,4 @@ Admin: `npx blueprint run marketplaceAdmin --testnet info | withdraw <to> <ton> 
 ## Not included (next steps for a full marketplace)
 
 An indexer and database (the stand scans the last 50 registrations), offers (`nft-offer`), collection pages, search,
-price changes from the UI (`change_price` exists in the sale contract), a backend that signs listings.
+a backend that signs listings, an auto-finisher for auctions (`finish_auction` also works as an external message).

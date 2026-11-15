@@ -64,6 +64,8 @@ export const AMOUNTS = {
     jettonBidExtra: ton('0.05'),
     /** TON auction buyout needs max_bid + 0.1 */
     tonBuyoutGas: ton('0.1'),
+    /** change price of a sale: the sale burns ~0.00025 TON of gas, the rest stays on it (no excess is sent back) */
+    changePrice: ton('0.005'),
     /** cancel sale / cancel auction (>= 0.1; for a sale the unused part returns) */
     cancel: ton('0.1'),
     /** finish auction: 0.1 for TON, 0.25 for jetton auctions (contract minimum) */
@@ -296,8 +298,8 @@ export type SaleListingInput = {
     royalty: Royalty;
     /** price in TON (nanoTON); 0 = cannot be bought for TON */
     tonPrice: bigint;
-    /** optional price in a jetton (units) */
-    jetton?: JettonPrice;
+    /** optional prices in jettons (units), one per jetton; the buyer pays with any of them or with TON */
+    jettons?: JettonPrice[];
     createdAt?: number;
     keyPair?: KeyPair;
 };
@@ -313,12 +315,12 @@ export type SaleListingInput = {
  */
 export async function buildSaleListing(input: SaleListingInput, resolveJettonWallet: JettonWalletResolver) {
     const { seller, nft, market, royalty } = input;
-    if (input.tonPrice <= 0n && !input.jetton) throw new Error('Set a TON price or a jetton price');
-    if (input.jetton && input.jetton.price <= 0n) throw new Error('Jetton price must be positive');
+    const jettons = input.jettons ?? [];
+    checkPrices(input.tonPrice, jettons);
     const rp = royaltyPercent(royalty);
     if (market.fee + rp >= PERCENT_BASE) throw new Error('Fee + royalty must be below 100%');
 
-    const kp = input.jetton ? (input.keyPair ?? newKeyPair()) : null;
+    const kp = jettons.length ? (input.keyPair ?? newKeyPair()) : null;
     const data = buildSaleData({
         marketplace: kp ? seller : market.marketplace,
         owner: null,
@@ -336,10 +338,8 @@ export async function buildSaleListing(input: SaleListingInput, resolveJettonWal
     const address = contractAddress(0, init);
 
     let body: Cell;
-    if (kp && input.jetton) {
-        const saleJettonWallet = await resolveJettonWallet(input.jetton.master, address);
-        const prices = Dictionary.empty(Dictionary.Keys.BigUint(256), JettonPriceValue);
-        prices.set(BigInt('0x' + saleJettonWallet.hash.toString('hex')), input.jetton);
+    if (kp) {
+        const prices = await buildJettonPrices(address, jettons, resolveJettonWallet);
         const signed = beginCell().storeAddress(market.marketplace).storeDict(prices).endCell();
         body = beginCell()
             .storeUint(OP.saleDeployJetton, 32)
@@ -360,6 +360,53 @@ export async function buildSaleListing(input: SaleListingInput, resolveJettonWal
             registerMessage(market.marketplace, address),
         ],
     };
+}
+
+function checkPrices(tonPrice: bigint, jettons: JettonPrice[]) {
+    if (tonPrice < 0n) throw new Error('TON price must not be negative');
+    if (tonPrice === 0n && !jettons.length) throw new Error('Set a TON price or a jetton price');
+    for (const [i, j] of jettons.entries()) {
+        if (j.price <= 0n) throw new Error('Jetton price must be positive');
+        if (jettons.findIndex((x) => x.master.equals(j.master)) !== i) throw new Error('One price per jetton');
+    }
+}
+
+/**
+ * Jetton prices of a sale: the key is the hash of the sale's own jetton wallet (the contract looks up the price by the
+ * sender of transfer_notification), so the wallet is resolved through each jetton master.
+ */
+export async function buildJettonPrices(
+    sale: Address,
+    jettons: JettonPrice[],
+    resolveJettonWallet: JettonWalletResolver,
+): Promise<Dictionary<bigint, JettonPrice>> {
+    const prices = Dictionary.empty(Dictionary.Keys.BigUint(256), JettonPriceValue);
+    for (const j of jettons) {
+        const w = await resolveJettonWallet(j.master, sale);
+        if (w.workChain !== 0) throw new Error('Jetton wallet must be in basechain');
+        prices.set(BigInt('0x' + w.hash.toString('hex')), j);
+    }
+    return prices;
+}
+
+/**
+ * Change the price of an active sale (seller only, no re-listing): replaces the TON price and the whole jetton price
+ * list. A price set to 0 / left out means that currency is no longer accepted. The attached TON pays the gas, the rest
+ * stays on the sale (it goes to the buyer with the NFT, or back to the seller on cancel).
+ */
+export async function changePriceMessage(
+    opts: { sale: Address; tonPrice: bigint; jettons: JettonPrice[]; queryId?: bigint },
+    resolveJettonWallet: JettonWalletResolver,
+): Promise<TcMessage> {
+    checkPrices(opts.tonPrice, opts.jettons);
+    const prices = await buildJettonPrices(opts.sale, opts.jettons, resolveJettonWallet);
+    const body = beginCell()
+        .storeUint(OP.saleChangePrice, 32)
+        .storeUint(opts.queryId ?? 0n, 64)
+        .storeCoins(opts.tonPrice)
+        .storeDict(prices.size ? prices : null)
+        .endCell();
+    return msg(opts.sale, AMOUNTS.changePrice, body);
 }
 
 /** Buy for TON: price + 0.1 TON (the contract minimum); the unused TON comes back with the NFT. */
